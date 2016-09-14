@@ -17,7 +17,12 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+include_directories(${OPENCV_INCLUDE_DIRS})
+link_directories(${OPENCV_LIBRARY_DIRS})
+
 add_executable(doodle2stl main.cpp)
+
+target_link_libraries(doodle2stl ${OPENCV_LIBRARIES})
 target_compile_features(doodle2stl PRIVATE cxx_variadic_templates)
 
 install(TARGETS doodle2stl DESTINATION "bin/")
