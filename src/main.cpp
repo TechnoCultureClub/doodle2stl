@@ -18,6 +18,7 @@
 //
 
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -38,15 +39,23 @@ struct Roi
 /*************/
 struct Vertex
 {
+    Vertex();
+    Vertex(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
     float x{0.f};
     float y{0.f};
     float z{0.f};
 };
 
+struct Face
+{
+    Face(){};
+    vector<uint32_t> indices;
+};
+
 struct Mesh
 {
-    vector<Vertex> vertices;
-    vector<uint32_t> faces;
+    vector<Vertex> vertices{};
+    vector<Face> faces{};
 };
 
 /*************/
@@ -73,8 +82,184 @@ void filterImage(cv::Mat& image, int subdiv)
 /*************/
 // Converts a binary image to a 2D mesh
 // The conversion is based on an existing matrice of vertices, with a given resolution
-int binaryToMesh(const cv::Mat& image, Mesh& out, int resolution)
+int getNeighbourCount(const cv::Mat& image, int x, int y)
 {
+    int count = 0;
+    if (image.at<uint8_t>(y, x) != 0)
+        ++count;
+    if (y + 1 < image.rows && image.at<uint8_t>(y + 1, x) != 0)
+        ++count;
+    if (y + 1 < image.rows && x + 1 < image.cols && image.at<uint8_t>(y + 1, x + 1) != 0)
+        ++count;
+    if (x + 1 < image.cols && image.at<uint8_t>(y, x) != 0)
+        ++count;
+
+    return count;
+}
+
+int findBottomVertex(const vector<Vertex>& line, float x)
+{
+    if (line.size() == 0)
+        return -1;
+
+    for (int i = 0; i < line.size(); ++i)
+        if (abs(x - line[i].x) < 0.01)
+            return i;
+
+    return -1;
+}
+
+int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
+{
+    // Reduce image resolution
+    cv::Mat map;
+    cv::resize(image, map, cv::Size(resolution, (resolution * image.rows) / image.cols));
+    cv::threshold(map, map, 128, 255, cv::THRESH_BINARY);
+
+    // First pass: add vertices where needed
+    vector<vector<Vertex>> vertices;
+    for (int y = 0; y < map.rows - 1; ++y)
+    {
+        vertices.push_back(vector<Vertex>());
+        for (int x = 0; x < map.cols - 1; ++x)
+        {
+            if (getNeighbourCount(map, x, y) >= 2)
+                vertices[y].push_back(Vertex(x, y, 0.f));
+        }
+    }
+
+    // Second pass: create faces for the bottom part
+    uint32_t totalIndex = 0;
+    for (int y = 0; y < vertices.size(); ++y)
+    {
+        if (vertices[y].size() < 2)
+        {
+            totalIndex += vertices[y].size();
+            continue;
+        }
+
+        for (int x = 0; x < vertices[y].size() - 1; ++x)
+        {
+            auto& vertex = vertices[y][x];
+            auto& next = vertices[y][x + 1];
+
+            auto bottomIndex = findBottomVertex(vertices[y + 1], vertex.x);
+            if (bottomIndex != -1)
+            {
+                auto& bottom = vertices[y + 1][bottomIndex];
+                auto bottomNextIndex = -1;
+                if (bottomIndex < vertices[y + 1].size() - 1)
+                {
+                    auto& bottomNext = vertices[y + 1][bottomIndex + 1];
+                    if (bottomNext.x - bottom.x < 1.01)
+                        bottomNextIndex = bottomIndex + 1;
+                }
+
+                if (next.x - vertex.x < 1.01)
+                {
+                    if (bottomNextIndex >= 0)
+                    {
+                        Face face;
+                        face.indices.push_back(totalIndex + x);
+                        face.indices.push_back(totalIndex + x + 1);
+                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
+                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        mesh.faces.push_back(face);
+                    }
+                    else
+                    {
+                        Face face;
+                        face.indices.push_back(totalIndex + x);
+                        face.indices.push_back(totalIndex + x + 1);
+                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        mesh.faces.push_back(face);
+                    }
+                }
+                else
+                {
+                    if (bottomNextIndex >= 0)
+                    {
+                        Face face;
+                        face.indices.push_back(totalIndex + x);
+                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
+                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        mesh.faces.push_back(face);
+                    }
+                }
+            }
+        }
+
+        totalIndex += vertices[y].size();
+    }
+
+    // Third pass: fill mesh.vertices
+    for (int y = 0; y < vertices.size(); ++y)
+    {
+        if (vertices[y].size() == 0)
+            continue;
+
+        for (int x = 0; x < vertices[y].size(); ++x)
+            mesh.vertices.push_back(vertices[y][x]);
+    }
+
+    // for (auto& v : mesh.vertices)
+    //    cout << v.x << " " << v.y << endl;
+
+    cv::imwrite("map.png", map);
+    return mesh.faces.size();
+}
+
+/*************/
+bool writeSTL(const string& filename, const Mesh& mesh)
+{
+    ofstream file(filename, ios::binary);
+    if (!file.is_open())
+        return false;
+
+    file << "solid doodle" << endl;
+    for (auto& f : mesh.faces)
+    {
+        // if (f.indices.size() != 3)
+        //    continue;
+        if (f.indices.size() == 3)
+        {
+            file << "facet normal 0.0 0.0 0.0" << endl;
+            file << "  outer loop" << endl;
+            for (auto i : f.indices)
+            {
+                auto& vertex = mesh.vertices[i];
+                file << "    vertex " << vertex.x << " " << vertex.y << " " << vertex.z << endl;
+            }
+            file << "  endloop" << endl;
+            file << "endfacet" << endl;
+        }
+        else if (f.indices.size() != 3)
+        {
+            file << "facet normal 0.0 0.0 0.0" << endl;
+            file << "  outer loop" << endl;
+            for (int i = 0; i < 3; ++i)
+            {
+                auto& vertex = mesh.vertices[f.indices[i]];
+                file << "    vertex " << vertex.x << " " << vertex.y << " " << vertex.z << endl;
+            }
+            file << "  endloop" << endl;
+            file << "endfacet" << endl;
+
+            file << "facet normal 0.0 0.0 0.0" << endl;
+            file << "  outer loop" << endl;
+            for (int i = 2; i != 1;)
+            {
+                i = i % 4;
+                auto& vertex = mesh.vertices[f.indices[i]];
+                file << "    vertex " << vertex.x << " " << vertex.y << " " << vertex.z << endl;
+                ++i;
+            }
+            file << "  endloop" << endl;
+            file << "endfacet" << endl;
+        }
+    }
+    file << "endsolid doodle" << endl;
+    file.close();
 }
 
 /*************/
@@ -117,6 +302,8 @@ int main(int argc, char** argv)
     // Create the base 2D mesh from the binary image
     Mesh mesh2D;
     auto nbrFaces = binaryToMesh(image, mesh2D, resolution);
+    cout << "Created " << nbrFaces << " faces" << endl;
+    auto successWrite = writeSTL("test.stl", mesh2D);
 
     return 0;
 }
