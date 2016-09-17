@@ -60,7 +60,7 @@ struct Mesh
 
 /*************/
 // Filters the image to keep the doodle
-void filterImage(cv::Mat& image, int subdiv)
+void filterImage(cv::Mat& image)
 {
     // Resize
     cv::Mat tmpMat;
@@ -69,14 +69,38 @@ void filterImage(cv::Mat& image, int subdiv)
 
     // Edge detection
     cv::Mat edges(image.rows, image.cols, CV_8U);
-    cv::Canny(image, edges, 20, 40, 3);
+    cv::Canny(image, edges, 15, 30, 3);
 
     // Edge filtering
     auto structElem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
     cv::morphologyEx(edges, tmpMat, cv::MORPH_CLOSE, structElem, cv::Point(-1, -1), 2);
     cv::morphologyEx(tmpMat, edges, cv::MORPH_OPEN, structElem, cv::Point(-1, -1), 1);
 
-    image = edges;
+    // Find and draw the biggest contour
+    vector<vector<cv::Point>> contours;
+    vector<cv::Vec4i> hierarchy;
+    cv::findContours(edges, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_TC89_L1);
+
+    tmpMat = cv::Mat::zeros(image.rows, image.cols, CV_8U);
+    for (int i = 0; i >= 0; i = hierarchy[i][0])
+    {
+        if (cv::contourArea(contours[i]) < 512)
+            continue;
+
+        cv::Scalar color(255, 255, 255);
+        drawContours(tmpMat, contours, i, color, -1);
+
+        for (int j = hierarchy[i][2]; j >= 0; j = hierarchy[j][0])
+        {
+            if (cv::contourArea(contours[j]) < 512)
+                continue;
+
+            cv::Scalar color(0, 0, 0);
+            drawContours(tmpMat, contours, j, color, -1);
+        }
+    }
+
+    image = tmpMat;
 }
 
 /*************/
@@ -109,7 +133,7 @@ int findBottomVertex(const vector<Vertex>& line, float x)
     return -1;
 }
 
-int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
+int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
 {
     // Reduce image resolution
     cv::Mat map;
@@ -118,18 +142,23 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
 
     // First pass: add vertices where needed
     vector<vector<Vertex>> vertices;
+    int vertexCount = 0;
     for (int y = 0; y < map.rows - 1; ++y)
     {
         vertices.push_back(vector<Vertex>());
         for (int x = 0; x < map.cols - 1; ++x)
         {
             if (getNeighbourCount(map, x, y) >= 2)
+            {
                 vertices[y].push_back(Vertex(x, y, 0.f));
+                ++vertexCount;
+            }
         }
     }
 
     // Second pass: create faces for the bottom part
     uint32_t totalIndex = 0;
+    vector<int> verticesFaceCount(vertexCount, 0);
     for (int y = 0; y < vertices.size(); ++y)
     {
         if (vertices[y].size() < 2)
@@ -165,6 +194,11 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
                         mesh.faces.push_back(face);
+
+                        verticesFaceCount[totalIndex + x] += 1;
+                        verticesFaceCount[totalIndex + x + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
                     }
                     else
                     {
@@ -173,6 +207,10 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
                         face.indices.push_back(totalIndex + x + 1);
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
                         mesh.faces.push_back(face);
+
+                        verticesFaceCount[totalIndex + x] += 1;
+                        verticesFaceCount[totalIndex + x + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
                     }
                 }
                 else
@@ -184,6 +222,10 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
                         mesh.faces.push_back(face);
+
+                        verticesFaceCount[totalIndex + x] += 1;
+                        verticesFaceCount[totalIndex + x + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
                     }
                 }
             }
@@ -202,10 +244,58 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution)
             mesh.vertices.push_back(vertices[y][x]);
     }
 
-    // for (auto& v : mesh.vertices)
-    //    cout << v.x << " " << v.y << endl;
+    // Fourth pass: go through all faces, and extrude them along outter edges
+    int faceCount = mesh.faces.size();
+    for (int i = 0; i < faceCount; ++i)
+    {
+        vector<int> outter;
+        for (auto idx : mesh.faces[i].indices)
+        {
+            if (verticesFaceCount[idx] < 4)
+                outter.push_back(idx);
+            else
+                outter.push_back(-1);
+        }
 
-    cv::imwrite("map.png", map);
+        for (int j = 0; j < outter.size(); ++j)
+        {
+            auto curr = outter[j];
+            auto next = outter[(j + 1) % outter.size()];
+            if (curr >= 0 && next >= 0)
+            {
+                Face face;
+                face.indices.push_back(curr);
+                face.indices.push_back(next);
+
+                mesh.vertices.push_back(mesh.vertices[next]);
+                mesh.vertices[mesh.vertices.size() - 1].z = height;
+                face.indices.push_back(mesh.vertices.size() - 1);
+
+                mesh.vertices.push_back(mesh.vertices[curr]);
+                mesh.vertices[mesh.vertices.size() - 1].z = height;
+                face.indices.push_back(mesh.vertices.size() - 1);
+
+                mesh.faces.push_back(face);
+            }
+        }
+    }
+
+    // Fifth pass: fill the top
+    for (int i = 0; i < faceCount; ++i)
+    {
+        Face face;
+
+        for (int j = 0; j < mesh.faces[i].indices.size(); ++j)
+        {
+            auto vertex = mesh.vertices[mesh.faces[i].indices[j]];
+            vertex.z = height;
+            mesh.vertices.push_back(vertex);
+            face.indices.push_back(mesh.vertices.size() - 1);
+        }
+
+        mesh.faces.push_back(face);
+    }
+
     return mesh.faces.size();
 }
 
@@ -267,7 +357,7 @@ int main(int argc, char** argv)
 {
     string filename{""};
     int resolution{128};
-    int subdivision{2};
+    float height{1.f};
 
     // Fill the parameters
     for (int i = 1; i < argc;)
@@ -284,24 +374,34 @@ int main(int argc, char** argv)
                 resolution = 128;
             i += 2;
         }
+        else if (i < argc - 1 && (string(argv[i]) == "-h" || string(argv[i]) == "--height"))
+        {
+            height = stof(string(argv[i + 1]));
+            if (height <= 1.f)
+                height = 1.f;
+            i += 2;
+        }
         else
         {
             ++i;
         }
     }
 
-    // Load the image
+    // Load the image, and resize it
     auto image = cv::imread(filename, cv::IMREAD_GRAYSCALE);
+    cv::Mat resized;
+    cv::resize(image, resized, cv::Size(2048, (2048 * image.rows) / image.cols));
+    image = resized;
 
     // Apply some filters on it
-    filterImage(image, subdivision);
+    filterImage(image);
 
     // Save the image for debug
     cv::imwrite("debug.png", image);
 
     // Create the base 2D mesh from the binary image
     Mesh mesh2D;
-    auto nbrFaces = binaryToMesh(image, mesh2D, resolution);
+    auto nbrFaces = binaryToMesh(image, mesh2D, resolution, height);
     cout << "Created " << nbrFaces << " faces" << endl;
     auto successWrite = writeSTL("test.stl", mesh2D);
 
