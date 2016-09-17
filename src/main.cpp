@@ -195,9 +195,9 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
                         face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
                         mesh.faces.push_back(face);
 
-                        verticesFaceCount[totalIndex + x] += 1;
+                        verticesFaceCount[totalIndex + x] += 2;
                         verticesFaceCount[totalIndex + x + 1] += 1;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 2;
                         verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
                     }
                     else
@@ -267,7 +267,7 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
         vector<int> outter;
         for (auto idx : mesh.faces[i].indices)
         {
-            if (verticesFaceCount[idx] < 4)
+            if (verticesFaceCount[idx] < 6)
                 outter.push_back(idx);
             else
                 outter.push_back(-1);
@@ -339,7 +339,7 @@ bool writeSTL(const string& filename, const Mesh& mesh)
             file << "  endloop" << endl;
             file << "endfacet" << endl;
         }
-        else if (f.indices.size() != 3)
+        else if (f.indices.size() == 4)
         {
             file << "facet normal 0.0 0.0 0.0" << endl;
             file << "  outer loop" << endl;
