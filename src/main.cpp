@@ -224,9 +224,25 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
                         mesh.faces.push_back(face);
 
                         verticesFaceCount[totalIndex + x] += 1;
-                        verticesFaceCount[totalIndex + x + 1] += 1;
+                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
                         verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
                     }
+                }
+            }
+            else
+            {
+                auto bottomNextIndex = findBottomVertex(vertices[y + 1], vertex.x + 1.f);
+                if (bottomNextIndex != -1 && next.x - vertex.x < 1.01)
+                {
+                    Face face;
+                    face.indices.push_back(totalIndex + x);
+                    face.indices.push_back(totalIndex + x + 1);
+                    face.indices.push_back(totalIndex + vertices[y].size() + bottomNextIndex);
+                    mesh.faces.push_back(face);
+
+                    verticesFaceCount[totalIndex + x] += 1;
+                    verticesFaceCount[totalIndex + x + 1] += 1;
+                    verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
                 }
             }
         }
