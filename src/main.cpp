@@ -140,6 +140,9 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
     cv::resize(image, map, cv::Size(resolution, (resolution * image.rows) / image.cols));
     cv::threshold(map, map, 128, 255, cv::THRESH_BINARY);
 
+    // We consider a maximum size of 100x100mm, so we scale it if resolution is different from 100
+    float ratio = 100.f / (float)resolution;
+
     // First pass: add vertices where needed
     vector<vector<Vertex>> vertices;
     int vertexCount = 0;
@@ -150,7 +153,7 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
         {
             if (getNeighbourCount(map, x, y) >= 2)
             {
-                vertices[y].push_back(Vertex(x, y, 0.f));
+                vertices[y].push_back(Vertex((float)x * ratio, (float)y * ratio, 0.f));
                 ++vertexCount;
             }
         }
@@ -369,6 +372,12 @@ bool writeSTL(const string& filename, const Mesh& mesh)
 }
 
 /*************/
+void printHelp()
+{
+    cout << "Usage: doodle2stl --resolution 128 --height 1 [filename]" << endl;
+}
+
+/*************/
 int main(int argc, char** argv)
 {
     string filename{""};
@@ -397,10 +406,21 @@ int main(int argc, char** argv)
                 height = 1.f;
             i += 2;
         }
+        else if (i < argc - 1 && (string(argv[i]) == "--help"))
+        {
+            printHelp();
+            exit(0);
+    }
         else
         {
             ++i;
         }
+    }
+
+    if (filename.empty())
+    {
+        printHelp();
+        exit(0);
     }
 
     // Load the image, and resize it
@@ -419,7 +439,7 @@ int main(int argc, char** argv)
     Mesh mesh2D;
     auto nbrFaces = binaryToMesh(image, mesh2D, resolution, height);
     cout << "Created " << nbrFaces << " faces" << endl;
-    auto successWrite = writeSTL("test.stl", mesh2D);
+    auto successWrite = writeSTL("/tmp/output.stl", mesh2D);
 
     return 0;
 }
