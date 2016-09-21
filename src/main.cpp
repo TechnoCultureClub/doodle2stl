@@ -18,9 +18,12 @@
 //
 
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <stdio.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include <opencv/cv.hpp>
@@ -328,8 +331,6 @@ bool writeSTL(const string& filename, const Mesh& mesh)
     file << "solid doodle" << endl;
     for (auto& f : mesh.faces)
     {
-        // if (f.indices.size() != 3)
-        //    continue;
         if (f.indices.size() == 3)
         {
             file << "facet normal 0.0 0.0 0.0" << endl;
@@ -372,6 +373,86 @@ bool writeSTL(const string& filename, const Mesh& mesh)
 }
 
 /*************/
+bool writeBinarySTL(const string& filename, const Mesh& mesh)
+{
+    int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0777);
+    if (fd == -1)
+    {
+        cout << "Error while creating the output STL file" << endl;
+        return false;
+    }
+
+    auto header = string("Tinkered with love by TinkTank");
+    header.resize(80, ' ');
+    if (write(fd, header.data(), header.size()) == -1)
+    {
+        cout << "Error while writing to " << filename << endl;
+        return false;
+    }
+
+    uint32_t faceNumber = 0;
+    for (auto& f : mesh.faces)
+        if (f.indices.size() == 3)
+            faceNumber += 1;
+        else if (f.indices.size() == 4)
+            faceNumber += 2;
+
+    if (write(fd, &faceNumber, 4) == -1)
+    {
+        cout << "Error while writing to " << filename << endl;
+        return false;
+    }
+
+    for (auto& f : mesh.faces)
+    {
+        uint16_t attrCount = 0;
+        if (f.indices.size() == 3)
+        {
+            float normal = 0.f;
+            for (int i = 0; i < 3; ++i)
+                write(fd, &normal, 4);
+
+            for (auto i : f.indices)
+            {
+                auto& vertex = mesh.vertices[i];
+                write(fd, &vertex, 3 * sizeof(float));
+            }
+
+            write(fd, &attrCount, sizeof(uint16_t));
+        }
+        else if (f.indices.size() == 4)
+        {
+            float normal = 0.f;
+            for (int i = 0; i < 3; ++i)
+                write(fd, &normal, 4);
+
+            for (int i = 0; i < 3; ++i)
+            {
+                auto& vertex = mesh.vertices[f.indices[i]];
+                write(fd, &vertex, 3 * sizeof(float));
+            }
+            write(fd, &attrCount, sizeof(uint16_t));
+
+            for (int i = 0; i < 3; ++i)
+                write(fd, &normal, 4);
+            for (int i = 2; i != 1;)
+            {
+                i = i % 4;
+                auto& vertex = mesh.vertices[f.indices[i]];
+                write(fd, &vertex, 3 * sizeof(float));
+                ++i;
+            }
+            write(fd, &attrCount, sizeof(uint16_t));
+        }
+    }
+
+    fsync(fd);
+    close(fd);
+
+    return true;
+}
+
+/*************/
 void printHelp()
 {
     cout << "Usage: doodle2stl --resolution 128 --height 1 [filename]" << endl;
@@ -410,7 +491,7 @@ int main(int argc, char** argv)
         {
             printHelp();
             exit(0);
-    }
+        }
         else
         {
             ++i;
@@ -439,7 +520,7 @@ int main(int argc, char** argv)
     Mesh mesh2D;
     auto nbrFaces = binaryToMesh(image, mesh2D, resolution, height);
     cout << "Created " << nbrFaces << " faces" << endl;
-    auto successWrite = writeSTL("/tmp/output.stl", mesh2D);
+    auto successWrite = writeBinarySTL("/tmp/output.stl", mesh2D);
 
     return 0;
 }
