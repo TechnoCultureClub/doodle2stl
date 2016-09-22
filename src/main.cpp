@@ -18,8 +18,10 @@
 //
 
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdio.h>
 #include <string>
@@ -459,11 +461,33 @@ void printHelp()
 }
 
 /*************/
+string getTimeAsString()
+{
+    static string previousTime = "";
+    static int index = 0;
+
+    auto t = std::time(nullptr);
+    char charTime[64];
+    strftime(charTime, sizeof(charTime), "%y%m%d-%H%M%S", localtime(&t));
+    auto currentTime = string(charTime);
+
+    if (previousTime == currentTime)
+        ++index;
+    else
+        index = 0;
+    previousTime = currentTime;
+    currentTime = currentTime + "_" + to_string(index);
+
+    return currentTime;
+}
+
+/*************/
 int main(int argc, char** argv)
 {
     string filename{""};
     int resolution{128};
     float height{1.f};
+    string prefix{"/var/www/doodle2stl"};
 
     // Fill the parameters
     for (int i = 1; i < argc;)
@@ -485,6 +509,11 @@ int main(int argc, char** argv)
             height = stof(string(argv[i + 1]));
             if (height <= 1.f)
                 height = 1.f;
+            i += 2;
+        }
+        else if (i < argc - 1 && (string(argv[i]) == "-p" || string(argv[i]) == "--prefix"))
+        {
+            prefix = string(argv[i + 1]);
             i += 2;
         }
         else if (i < argc - 1 && (string(argv[i]) == "--help"))
@@ -519,8 +548,10 @@ int main(int argc, char** argv)
     // Create the base 2D mesh from the binary image
     Mesh mesh2D;
     auto nbrFaces = binaryToMesh(image, mesh2D, resolution, height);
-    cout << "Created " << nbrFaces << " faces" << endl;
-    auto successWrite = writeBinarySTL("/tmp/output.stl", mesh2D);
+    auto path = getTimeAsString() + ".stl";
+    cout << path << endl;
+    path = prefix + "/" + path;
+    auto successWrite = writeBinarySTL(path, mesh2D);
 
     return 0;
 }
