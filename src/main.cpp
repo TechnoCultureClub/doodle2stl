@@ -158,7 +158,7 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
         {
             if (getNeighbourCount(map, x, y) >= 2)
             {
-                vertices[y].push_back(Vertex((float)x * ratio, (float)y * ratio, 0.f));
+                vertices[y].push_back(Vertex((float)x, (float)y, 0.f));
                 ++vertexCount;
             }
         }
@@ -265,7 +265,11 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
             continue;
 
         for (int x = 0; x < vertices[y].size(); ++x)
+        {
+            vertices[y][x].x *= ratio;
+            vertices[y][x].y *= ratio;
             mesh.vertices.push_back(vertices[y][x]);
+        }
     }
 
     // Fourth pass: go through all faces, and extrude them along outter edges
