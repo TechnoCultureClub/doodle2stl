@@ -69,7 +69,10 @@ void filterImage(cv::Mat& image)
 {
     // Resize
     cv::Mat tmpMat;
-    cv::resize(image, tmpMat, cv::Size(800, (800 * image.rows) / image.cols));
+    if (image.rows > image.cols)
+        cv::resize(image, tmpMat, cv::Size((800 * image.cols) / image.rows, 800));
+    else
+        cv::resize(image, tmpMat, cv::Size(800, (800 * image.rows) / image.cols));
     image = tmpMat;
 
     // Edge detection
@@ -77,9 +80,11 @@ void filterImage(cv::Mat& image)
     cv::Canny(image, edges, 15, 30, 3);
 
     // Edge filtering
-    auto structElem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
-    cv::morphologyEx(edges, tmpMat, cv::MORPH_CLOSE, structElem, cv::Point(-1, -1), 2);
-    cv::morphologyEx(tmpMat, edges, cv::MORPH_OPEN, structElem, cv::Point(-1, -1), 1);
+    auto structElem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7));
+    cv::morphologyEx(edges, tmpMat, cv::MORPH_CLOSE, structElem, cv::Point(-1, -1), 3);
+    // cv::morphologyEx(tmpMat, edges, cv::MORPH_OPEN, structElem, cv::Point(-1, -1), 2);
+    edges = tmpMat;
+    cv::imwrite("debug.png", edges);
 
     // Find and draw the biggest contour
     vector<vector<cv::Point>> contours;
@@ -143,7 +148,7 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
     // Reduce image resolution
     cv::Mat map;
     cv::resize(image, map, cv::Size(resolution, (resolution * image.rows) / image.cols));
-    cv::threshold(map, map, 128, 255, cv::THRESH_BINARY);
+    cv::threshold(map, map, 64, 255, cv::THRESH_BINARY);
 
     // We consider a maximum size of 100x100mm, so we scale it if resolution is different from 100
     float ratio = 100.f / (float)resolution;
