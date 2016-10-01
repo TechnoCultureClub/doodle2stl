@@ -172,7 +172,7 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
     // Second pass: create faces for the bottom part
     uint32_t totalIndex = 0;
     vector<int> verticesFaceCount(vertexCount, 0);
-    for (int y = 0; y < vertices.size(); ++y)
+    for (int y = 0; y < vertices.size() - 1; ++y)
     {
         if (vertices[y].size() < 2)
         {
