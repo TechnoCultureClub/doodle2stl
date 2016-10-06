@@ -76,33 +76,38 @@ void filterImage(cv::Mat& image)
     image = tmpMat;
 
     // Edge detection
+    cv::threshold(image, image, 64, 255, cv::THRESH_BINARY_INV);
+
+    // TODO: hey, in most cases, this is enough
+    return;
+
+    // TODO: keeping the rest for further use, if ever
     cv::Mat edges(image.rows, image.cols, CV_8U);
-    cv::Canny(image, edges, 15, 30, 3);
+    cv::Canny(image, edges, 64, 128, 3);
 
     // Edge filtering
-    auto structElem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7));
-    cv::morphologyEx(edges, tmpMat, cv::MORPH_CLOSE, structElem, cv::Point(-1, -1), 3);
+    // auto structElem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7));
+    // cv::morphologyEx(edges, tmpMat, cv::MORPH_CLOSE, structElem, cv::Point(-1, -1), 1);
     // cv::morphologyEx(tmpMat, edges, cv::MORPH_OPEN, structElem, cv::Point(-1, -1), 2);
-    edges = tmpMat;
-    cv::imwrite("debug.png", edges);
+    // edges = tmpMat;
 
     // Find and draw the biggest contour
     vector<vector<cv::Point>> contours;
     vector<cv::Vec4i> hierarchy;
-    cv::findContours(edges, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_TC89_L1);
+    cv::findContours(edges, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
 
     tmpMat = cv::Mat::zeros(image.rows, image.cols, CV_8U);
     for (int i = 0; i >= 0; i = hierarchy[i][0])
     {
-        if (cv::contourArea(contours[i]) < 512)
+        if (cv::contourArea(contours[i]) < 64)
             continue;
 
-        cv::Scalar color(255, 255, 255);
+        cv::Scalar color(255);
         drawContours(tmpMat, contours, i, color, -1);
 
         for (int j = hierarchy[i][2]; j >= 0; j = hierarchy[j][0])
         {
-            if (cv::contourArea(contours[j]) < 512)
+            if (cv::contourArea(contours[j]) < 64)
                 continue;
 
             cv::Scalar color(0, 0, 0);
@@ -466,7 +471,7 @@ bool writeBinarySTL(const string& filename, const Mesh& mesh)
 /*************/
 void printHelp()
 {
-    cout << "Usage: doodle2stl --resolution 128 --height 1 [filename]" << endl;
+    cout << "Usage: doodle2stl --resolution 256 --height 1 [filename]" << endl;
 }
 
 /*************/
@@ -494,19 +499,14 @@ string getTimeAsString()
 int main(int argc, char** argv)
 {
     string filename{""};
-    int resolution{128};
+    int resolution{256};
     float height{1.f};
     string prefix{"/var/www/doodle2stl"};
 
     // Fill the parameters
     for (int i = 1; i < argc;)
     {
-        if (i == argc - 1)
-        {
-            filename = string(argv[i]);
-            ++i;
-        }
-        else if (i < argc - 1 && (string(argv[i]) == "-r" || string(argv[i]) == "--resolution"))
+        if (i < argc - 1 && (string(argv[i]) == "-r" || string(argv[i]) == "--resolution"))
         {
             resolution = stoi(string(argv[i + 1]));
             if (resolution == 0)
@@ -525,10 +525,15 @@ int main(int argc, char** argv)
             prefix = string(argv[i + 1]);
             i += 2;
         }
-        else if (i < argc - 1 && (string(argv[i]) == "--help"))
+        else if (string(argv[i]) == "--help")
         {
             printHelp();
             exit(0);
+        }
+        else if (i == argc - 1)
+        {
+            filename = string(argv[i]);
+            ++i;
         }
         else
         {
@@ -552,7 +557,7 @@ int main(int argc, char** argv)
     filterImage(image);
 
     // Save the image for debug
-    cv::imwrite("debug.png", image);
+    // cv::imwrite("debug.png", image);
 
     // Create the base 2D mesh from the binary image
     Mesh mesh2D;
