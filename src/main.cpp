@@ -44,7 +44,7 @@ struct Roi
 /*************/
 struct Vertex
 {
-    Vertex();
+    Vertex(){};
     Vertex(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
     float x{0.f};
     float y{0.f};
@@ -82,6 +82,7 @@ void filterImage(cv::Mat& image)
     return;
 
     // TODO: keeping the rest for further use, if ever
+    /*
     cv::Mat edges(image.rows, image.cols, CV_8U);
     cv::Canny(image, edges, 64, 128, 3);
 
@@ -116,24 +117,55 @@ void filterImage(cv::Mat& image)
     }
 
     image = tmpMat;
+    */
 }
 
 /*************/
 // Converts a binary image to a 2D mesh
 // The conversion is based on an existing matrice of vertices, with a given resolution
-int getNeighbourCount(const cv::Mat& image, int x, int y)
+bool getVertexAt(const cv::Mat& image, int x, int y, Vertex& vertex)
 {
     int count = 0;
-    if (image.at<uint8_t>(y, x) != 0)
+    float weight = 0.f;
+    if (image.at<uint8_t>(y, x) > 16)
+    {
+        vertex.x += x * image.at<uint8_t>(y, x);
+        vertex.y += y * image.at<uint8_t>(y, x);
+        weight += image.at<uint8_t>(y, x);
         ++count;
-    if (y + 1 < image.rows && image.at<uint8_t>(y + 1, x) != 0)
+    }
+    if (y + 1 < image.rows && image.at<uint8_t>(y + 1, x) > 16)
+    {
+        vertex.x += x * image.at<uint8_t>(y + 1, x);
+        vertex.y += (y + 1) * image.at<uint8_t>(y + 1, x);
+        weight += image.at<uint8_t>(y + 1, x);
         ++count;
-    if (y + 1 < image.rows && x + 1 < image.cols && image.at<uint8_t>(y + 1, x + 1) != 0)
+    }
+    if (y + 1 < image.rows && x + 1 < image.cols && image.at<uint8_t>(y + 1, x + 1) > 16)
+    {
+        vertex.x += (x + 1) * image.at<uint8_t>(y + 1, x + 1);
+        vertex.y += (y + 1) * image.at<uint8_t>(y + 1, x + 1);
+        weight += image.at<uint8_t>(y + 1, x + 1);
         ++count;
-    if (x + 1 < image.cols && image.at<uint8_t>(y, x) != 0)
+    }
+    if (x + 1 < image.cols && image.at<uint8_t>(y, x + 1) > 16)
+    {
+        vertex.x += (x + 1) * image.at<uint8_t>(y, x + 1);
+        vertex.y += y * image.at<uint8_t>(y, x + 1);
+        weight += image.at<uint8_t>(y, x + 1);
         ++count;
+    }
 
-    return count;
+    if (count >= 2)
+    {
+        vertex.x /= weight;
+        vertex.y /= weight;
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 int findBottomVertex(const vector<Vertex>& line, float x)
@@ -153,10 +185,13 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
     // Reduce image resolution
     cv::Mat map;
     cv::resize(image, map, cv::Size(resolution, (resolution * image.rows) / image.cols));
-    cv::threshold(map, map, 64, 255, cv::THRESH_BINARY);
 
     // We consider a maximum size of 100x100mm, so we scale it if resolution is different from 100
     float ratio = 100.f / (float)resolution;
+
+    // Initialize the mesh
+    mesh.vertices.clear();
+    vector<int> indices(map.cols * map.rows, -1);
 
     // First pass: add vertices where needed
     vector<vector<Vertex>> vertices;
@@ -166,106 +201,103 @@ int binaryToMesh(const cv::Mat& image, Mesh& mesh, int resolution, float height)
         vertices.push_back(vector<Vertex>());
         for (int x = 0; x < map.cols - 1; ++x)
         {
-            if (getNeighbourCount(map, x, y) >= 2)
+            Vertex vertex;
+            if (getVertexAt(map, x, y, vertex))
             {
-                vertices[y].push_back(Vertex((float)x, (float)y, 0.f));
+                vertices[y].push_back(vertex);
+                indices[x + y * map.cols] = vertexCount;
                 ++vertexCount;
             }
         }
     }
 
     // Second pass: create faces for the bottom part
-    uint32_t totalIndex = 0;
     vector<int> verticesFaceCount(vertexCount, 0);
-    for (int y = 0; y < vertices.size() - 1; ++y)
+    for (int y = 0; y < map.rows - 1; ++y)
     {
-        if (vertices[y].size() < 2)
+        for (int x = 0; x < map.cols - 1; ++x)
         {
-            totalIndex += vertices[y].size();
-            continue;
-        }
+            auto index = y * map.cols + x;
 
-        for (int x = 0; x < vertices[y].size() - 1; ++x)
-        {
-            auto& vertex = vertices[y][x];
-            auto& next = vertices[y][x + 1];
+            auto vertex = indices[index];
+            auto next = indices[index + 1];
+            auto bottom = indices[index + map.cols];
+            auto bottomNext = indices[index + map.cols + 1];
 
-            auto bottomIndex = findBottomVertex(vertices[y + 1], vertex.x);
-            if (bottomIndex != -1)
+            if (vertex != -1)
             {
-                auto& bottom = vertices[y + 1][bottomIndex];
-                auto bottomNextIndex = -1;
-                if (bottomIndex < vertices[y + 1].size() - 1)
+                if (next != -1)
                 {
-                    auto& bottomNext = vertices[y + 1][bottomIndex + 1];
-                    if (bottomNext.x - bottom.x < 1.01)
-                        bottomNextIndex = bottomIndex + 1;
-                }
-
-                if (next.x - vertex.x < 1.01)
-                {
-                    if (bottomNextIndex >= 0)
+                    if (bottom != -1)
                     {
                         Face face;
-                        face.indices.push_back(totalIndex + x);
-                        face.indices.push_back(totalIndex + x + 1);
-                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
-                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        face.indices.push_back(vertex);
+                        face.indices.push_back(next);
+                        face.indices.push_back(bottom);
                         mesh.faces.push_back(face);
 
-                        verticesFaceCount[totalIndex + x] += 2;
-                        verticesFaceCount[totalIndex + x + 1] += 1;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 2;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
+                        verticesFaceCount[vertex]++;
+                        verticesFaceCount[next]++;
+                        verticesFaceCount[bottom]++;
+
+                        if (bottomNext != -1)
+                        {
+                            Face face;
+                            face.indices.push_back(next);
+                            face.indices.push_back(bottomNext);
+                            face.indices.push_back(bottom);
+                            mesh.faces.push_back(face);
+
+                            verticesFaceCount[next]++;
+                            verticesFaceCount[bottomNext]++;
+                            verticesFaceCount[bottom]++;
+                        }
                     }
-                    else
+                    else if (bottomNext != -1)
                     {
                         Face face;
-                        face.indices.push_back(totalIndex + x);
-                        face.indices.push_back(totalIndex + x + 1);
-                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        face.indices.push_back(vertex);
+                        face.indices.push_back(next);
+                        face.indices.push_back(bottomNext);
                         mesh.faces.push_back(face);
 
-                        verticesFaceCount[totalIndex + x] += 1;
-                        verticesFaceCount[totalIndex + x + 1] += 1;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
+                        verticesFaceCount[vertex]++;
+                        verticesFaceCount[next]++;
+                        verticesFaceCount[bottomNext]++;
                     }
                 }
                 else
                 {
-                    if (bottomNextIndex >= 0)
+                    if (bottom != -1 && bottomNext != -1)
                     {
                         Face face;
-                        face.indices.push_back(totalIndex + x);
-                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex + 1);
-                        face.indices.push_back(totalIndex + vertices[y].size() + bottomIndex);
+                        face.indices.push_back(vertex);
+                        face.indices.push_back(bottom);
+                        face.indices.push_back(bottomNext);
                         mesh.faces.push_back(face);
 
-                        verticesFaceCount[totalIndex + x] += 1;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex] += 1;
-                        verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
+                        verticesFaceCount[vertex]++;
+                        verticesFaceCount[bottom]++;
+                        verticesFaceCount[bottomNext]++;
                     }
                 }
             }
             else
             {
-                auto bottomNextIndex = findBottomVertex(vertices[y + 1], vertex.x + 1.f);
-                if (bottomNextIndex != -1 && next.x - vertex.x < 1.01)
+                if (next != -1 && bottom != -1 && bottomNext != -1)
                 {
                     Face face;
-                    face.indices.push_back(totalIndex + x);
-                    face.indices.push_back(totalIndex + x + 1);
-                    face.indices.push_back(totalIndex + vertices[y].size() + bottomNextIndex);
+                    face.indices.push_back(next);
+                    face.indices.push_back(bottomNext);
+                    face.indices.push_back(bottom);
                     mesh.faces.push_back(face);
 
-                    verticesFaceCount[totalIndex + x] += 1;
-                    verticesFaceCount[totalIndex + x + 1] += 1;
-                    verticesFaceCount[totalIndex + vertices[y].size() + bottomIndex + 1] += 1;
+                    verticesFaceCount[next]++;
+                    verticesFaceCount[bottomNext]++;
+                    verticesFaceCount[bottom]++;
                 }
             }
         }
-
-        totalIndex += vertices[y].size();
     }
 
     // Third pass: fill mesh.vertices
